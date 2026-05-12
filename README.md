@@ -16,6 +16,14 @@ This tool is specifically designed for remote "black box" and PCI DSS segmentati
 
 ## Installation
 
+### Prerequisites
+The script relies on native Linux networking tools. Ensure they are installed:
+```bash
+sudo apt-get update
+sudo apt-get install -y iproute2 network-manager iw procps gawk grep
+```
+
+### Setup
 ```bash
 git clone https://github.com/yourusername/remote-net-manager.git
 cd remote-net-manager
