@@ -35,6 +35,9 @@ MAIN_IFACE=""
 MAIN_GW=""
 WIFI_IFACE=""
 WIFI_CONN_NAME="guest_wifi_test"
+CONFIRMED=0
+
+trap 'if [ "$CONFIRMED" -eq 0 ] && [ -n "$MAIN_IFACE" ]; then echo -e "[!] Abnormal exit or timeout detected. Cleaning up..."; cleanup; fi' EXIT
 
 log() { echo -e "[*] $1"; }
 err() { echo -e "[!] $1" >&2; }
@@ -57,17 +60,20 @@ detect_primary_interface() {
 
     # Strict SSH Origin Route Pinning
     if [ -n "$SSH_CONNECTION" ]; then
-        SSH_CLIENT_IP=$(echo $SSH_CONNECTION | awk "{print \$1}")
+        SSH_CLIENT_IP=$(echo $SSH_CONNECTION | awk '{print $1}')
         log "Pinning SSH origin route for $SSH_CLIENT_IP via $MAIN_GW dev $MAIN_IFACE..."
         ip route add "$SSH_CLIENT_IP/32" via "$MAIN_GW" dev "$MAIN_IFACE" >/dev/null 2>&1 || true
+    else
+        log "Warning: SSH_CONNECTION is not set. If connected via SSH, run with 'sudo -E' so origin pinning works."
     fi
 }
 
 cleanup() {
+    CONFIRMED=1
     log "Starting cleanup mode..."
 
     # 1. Cleanup VLANs and Routing Rules
-    for vlan_iface in $(ip -br link show type vlan 2>/dev/null | awk "{print \$1}" | cut -d@ -f1); do
+    for vlan_iface in $(ip -br link show type vlan 2>/dev/null | awk '{print $1}' | cut -d@ -f1); do
         if [ -n "$vlan_iface" ] && [ "$vlan_iface" != "$MAIN_IFACE" ]; then
             log "Removing VLAN interface: $vlan_iface"
             ip link set dev "$vlan_iface" down 2>/dev/null || true
@@ -92,7 +98,7 @@ cleanup() {
 
     # Remove SSH pinned route
     if [ -n "$SSH_CONNECTION" ]; then
-        SSH_CLIENT_IP=$(echo $SSH_CONNECTION | awk "{print \$1}")
+        SSH_CLIENT_IP=$(echo $SSH_CONNECTION | awk '{print $1}')
         ip route del "$SSH_CLIENT_IP/32" via "$MAIN_GW" dev "$MAIN_IFACE" >/dev/null 2>&1 || true
     fi
 
@@ -109,8 +115,10 @@ rollback_timer() {
 
     if [[ "$user_input" == "confirm" ]]; then
         log "Configuration confirmed by operator. Rollback cancelled."
+        CONFIRMED=1
     else
         log "Timeout or operator rollback requested. Reverting network changes..."
+        CONFIRMED=1
         cleanup
         exit 1
     fi
@@ -120,7 +128,7 @@ vlan_mode() {
     detect_primary_interface
 
     echo "Available physical interfaces:"
-    ip -br link show | awk "$2 != \"DOWN\" && $1 != \"lo\" {print \$1}"
+    ip -br link show | awk '$2 != "DOWN" && $1 != "lo" {print $1}'
 
     read -p "Enter base interface for VLANs (e.g., eth0): " base_iface
     if [ "$base_iface" == "$MAIN_IFACE" ]; then
@@ -133,6 +141,11 @@ vlan_mode() {
     for vlan in "${ADDR[@]}"; do
         vlan=$(echo "$vlan" | xargs) # trim whitespace
         if [ -z "$vlan" ]; then continue; fi
+
+        if ! [[ "$vlan" =~ ^[0-9]+$ ]] || [ "$vlan" -lt 1 ] || [ "$vlan" -gt 4094 ]; then
+            err "Invalid VLAN ID: $vlan"
+            continue
+        fi
 
         read -p "Enter static IP/CIDR for VLAN $vlan (e.g., 192.168.10.5/24): " ip_cidr
         read -p "Enter custom MAC address for VLAN $vlan (leave blank to inherit primary MAC): " custom_mac
@@ -174,7 +187,7 @@ vlan_mode() {
 wifi_mode() {
     detect_primary_interface
 
-    WIFI_IFACE=$(iw dev | awk "$1==\"Interface\"{print \$2}" | head -n 1)
+    WIFI_IFACE=$(iw dev | awk '$1=="Interface"{print $2}' | head -n 1)
     if [ -z "$WIFI_IFACE" ]; then
         err "No WiFi interface detected. Make sure the wireless adapter is connected."
         exit 1
@@ -250,6 +263,7 @@ case "$1" in
         wifi_mode
         ;;
     cleanup)
+        CONFIRMED=1
         detect_primary_interface
         cleanup
         ;;
