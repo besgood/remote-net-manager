@@ -223,7 +223,7 @@ wifi_mode() {
 
     # Prevent DHCP route hijacking by deprioritizing the WiFi default route
     log "Securing routing table (deprioritizing WiFi routes to protect SSH)..."
-    nmcli connection modify "$WIFI_CONN_NAME" ipv4.route-metric 999 ipv6.route-metric 999 ipv4.never-default yes ipv6.never-default yes
+    nmcli connection modify "$WIFI_CONN_NAME" ipv4.route-metric 999 ipv6.route-metric 999 ipv4.never-default no ipv6.never-default no
 
     log "Connecting to $ssid..."
     if ! nmcli connection up "$WIFI_CONN_NAME"; then
@@ -235,6 +235,19 @@ wifi_mode() {
     log "WiFi connection successful. Waiting to acquire DHCP..."
     sleep 5
     ip -br addr show dev "$WIFI_IFACE"
+
+    WIFI_GW=$(ip route show default dev "$WIFI_IFACE" 2>/dev/null | awk '/default/ {print $3}')
+    WIFI_IP=$(ip -4 addr show dev "$WIFI_IFACE" 2>/dev/null | awk '/inet/ {print $2}' | cut -d/ -f1)
+
+    if [ -n "$WIFI_GW" ] && [ -n "$WIFI_IP" ]; then
+        table_id=300
+        log "Configuring Source-Based Routing for WiFi IP $WIFI_IP via $WIFI_GW (Table $table_id)..."
+        ip route add default via "$WIFI_GW" dev "$WIFI_IFACE" table "$table_id" 2>/dev/null || true
+        ip rule add from "$WIFI_IP" lookup "$table_id" 2>/dev/null || true
+        log "Routing configured. Any traffic originating from $WIFI_IP will be forced through $WIFI_IFACE."
+    else
+        log "Warning: Could not detect WiFi IP or Gateway. Source-Based Routing not applied."
+    fi
 
     rollback_timer
 }
