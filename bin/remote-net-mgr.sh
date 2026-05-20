@@ -206,6 +206,8 @@ wifi_mode() {
     read -p "Enter target SSID (or manual/hidden SSID): " ssid
     read -s -p "Enter WiFi password (leave blank for open): " password
     echo ""
+    read -p "Enter custom MAC address for WiFi (leave blank for hardware default): " wifi_mac
+    echo ""
 
     log "Configuring Guest WiFi..."
 
@@ -219,6 +221,11 @@ wifi_mode() {
         nmcli connection add type wifi con-name "$WIFI_CONN_NAME" ifname "$WIFI_IFACE" ssid "$ssid" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password" >/dev/null
     else
         nmcli connection add type wifi con-name "$WIFI_CONN_NAME" ifname "$WIFI_IFACE" ssid "$ssid" >/dev/null
+    fi
+
+    if [ -n "$wifi_mac" ]; then
+        log "Applying spoofed MAC address $wifi_mac to WiFi connection..."
+        nmcli connection modify "$WIFI_CONN_NAME" wifi.cloned-mac-address "$wifi_mac"
     fi
 
     # Prevent DHCP route hijacking by deprioritizing the WiFi default route
